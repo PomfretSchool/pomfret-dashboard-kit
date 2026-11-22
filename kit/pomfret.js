@@ -12,7 +12,7 @@
 
   // ------------------------------------------------------------------ data
   PD.parseCSV = function (text) {
-    text = String(text || "").replace(/^﻿/, "");
+    text = String(text || "").replace(/^\uFEFF/, "");
     const rows = []; let row = [], cell = "", q = false;
     for (let i = 0; i < text.length; i++) {
       const ch = text[i];
@@ -507,12 +507,12 @@
 
   // ------------------------------------------------------------------ maps
   const GEO_URL = {
-    us: "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json",
-    world: "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json",
+    us: "https:\/\/cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json",
+    world: "https:\/\/cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json",
   };
   // Outlines: fetch the TopoJSON from jsDelivr; where fetch is blocked (e.g. a claude.ai artifact),
   // fall back to the Datamaps script on cdnjs, which carries US + world TopoJSON inside it.
-  const DATAMAPS = "https://cdnjs.cloudflare.com/ajax/libs/datamaps/0.5.9/datamaps.all.min.js";
+  const DATAMAPS = "https:\/\/cdnjs.cloudflare.com/ajax/libs/datamaps/0.5.9/datamaps.all.min.js";
   let dm;
   const fromDatamaps = (name) => {
     dm = dm || loadScript(DATAMAPS, () => window.Datamap).catch(() => null);
@@ -691,7 +691,7 @@
   PD.readFile = function (file) {
     const name = file.name;
     if (/\.xlsx?$/i.test(name)) {
-      loadScript("https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js").then(() => file.arrayBuffer()).then((buf) => {
+      loadScript("https:\/\/cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js").then(() => file.arrayBuffer()).then((buf) => {
         const wb = XLSX.read(buf, { type: "array" });
         const want = PD.config && PD.config.sheet;
         const sheet = wb.Sheets[want && wb.Sheets[want] ? want : wb.SheetNames.find((n) => n !== "README") || wb.SheetNames[0]];

@@ -59,13 +59,20 @@ Check silently; do only the missing steps. Before each step say in one sentence 
    - Set `TITLE`, `TAB` and `COLUMNS` in `Code.js` (only the columns the page actually uses), and the same list in `CONFIG.columns`.
    - Check the page before pushing: `node --check` the `<script>` block, and if you can, render `index.html` locally with `kit.html` inlined and `google.script.run.getRows` stubbed with the Sheet's rows; look at it for errors.
    - `git init`, save point, `clasp push --force` (the first push replaces Google's default settings file, and without `--force` clasp just prints "Skipping push" and does nothing; later pushes don't need it). Get the preview link: `clasp deployments`, then use the `@HEAD` ID in `https://script.google.com/a/macros/pomfret.org/s/<ID>/dev`. Write `DASHBOARD.md`.
+   - **Open the preview link yourself and confirm the dashboard actually draws** (use a browser tool if you have one and the person is signed in there; otherwise ask them to open it and tell you exactly what they see — a blank page is a failure, not "loaded"). "Pushed" never means "works": Google rewrites the page before serving it.
 5. **Hand over the preview link.** The first time they open it, Google asks them to **Review permissions → choose their pomfret account → Allow**. That lets the dashboard read *this one Sheet*.
 
 ## Changing a dashboard
 
 1. If this is the first change in this conversation, check nobody edited it in the browser: `clasp clone <scriptId>` into a temporary folder and compare. If it differs, tell them plainly and ask which version to keep.
 2. Make the change; regenerate `kit.html` only if `kit/` changed.
-3. Save point with a plain message, `clasp push`, then: *"Done. Refresh your preview link."* Mention anything you couldn't do.
+3. Save point with a plain message, `clasp push`, check the preview link draws (as above), then: *"Done. Refresh your preview link."* Mention anything you couldn't do.
+
+## Apps Script gotchas (learned the hard way)
+
+- **Never put `//` inside a JavaScript string** in any `.html` file, e.g. `"https://…"`. Google strips comments from served pages and can mistake that `//` for a comment, cutting the line and leaving a blank page with "Invalid or unexpected token" and "PD is not defined" in the console. Write `"https:\/\/…"` instead (same value). Check before pushing: `grep -nE "[\"'\`][^\"'\`]*[^\\\\]//" index.html kit.html` should print nothing inside `<script>`.
+- **Don't type invisible characters** (byte-order marks, zero-width spaces) into code; use escapes like `﻿`.
+- **A blank page means the page's JavaScript failed.** To see what Google actually served: in the preview page, fetch `location.href`, decode the `userHtml` value inside `goog.script.init("…")`, and try `new Function()` on each `<script>` block to find the one that won't parse.
 
 Data edits in the Sheet never need you: the dashboard reads the Sheet every time the page loads.
 
