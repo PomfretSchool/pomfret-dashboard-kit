@@ -10,14 +10,6 @@
   --cond: "Barlow Condensed", "Arial Narrow", "Avenir Next Condensed", sans-serif;
   color-scheme: light;
 }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #0c0c0c; --panel: #161616; --ink: #f1f1ef; --muted: #a9adb1; --faint: #7d8186;
-    --line: #2c2d2f; --track: #232323; --silver: #8d9298; --red: #e5283f; --red-soft: rgba(229,40,63,.2);
-    --good: #6fbf94; --context: #6e7378; --context-2: #3c3f42; --ink-2: #d0d2d4;
-    --heat-0: #1d1d1d; --heat-1: #e5283f; color-scheme: dark;
-  }
-}
 :root[data-theme="dark"] {
   --bg: #0c0c0c; --panel: #161616; --ink: #f1f1ef; --muted: #a9adb1; --faint: #7d8186;
   --line: #2c2d2f; --track: #232323; --silver: #8d9298; --red: #e5283f; --red-soft: rgba(229,40,63,.2);

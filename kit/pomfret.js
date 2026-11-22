@@ -678,7 +678,7 @@
   // ------------------------------------------------------------------ theme, file loading, lifecycle
   PD.toggleTheme = function () {
     const root = document.documentElement;
-    const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    const dark = root.dataset.theme === "dark";   // light is the default; dark only when chosen
     root.dataset.theme = dark ? "light" : "dark";
     try { localStorage.setItem("pomfret-theme", root.dataset.theme); } catch (e) {}
     PD.rerender();
