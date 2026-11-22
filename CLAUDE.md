@@ -31,6 +31,8 @@ Each dashboard folder holds `Code.js`, `index.html`, `kit.html` (generated), `ap
 
 ## First run on a new computer
 
+If you were asked to get this kit into an empty folder, first make sure `git` works (step 1 below covers the Mac developer-tools prompt), then `git clone https://github.com/PomfretSchool/pomfret-dashboard-kit.git .` and continue here.
+
 Check silently; do only the missing steps. Before each step say in one sentence what it's for. Whenever the person must click something, say exactly what they'll see and what to press, then wait for them.
 
 1. **Tools.** If `node -v` fails, install Node for this user only (no admin password, no Homebrew, no sudo):
