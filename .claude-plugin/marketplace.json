@@ -1,0 +1,12 @@
+{
+  "name": "pomfret",
+  "owner": { "name": "Pomfret School" },
+  "description": "Claude plugins for Pomfret School staff.",
+  "plugins": [
+    {
+      "name": "pomfret-dashboards",
+      "source": "./plugin",
+      "description": "Turn a Google Sheet into a Pomfret-styled dashboard, change it in plain English, and publish it."
+    }
+  ]
+}

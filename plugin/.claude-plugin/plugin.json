@@ -1,0 +1,7 @@
+{
+  "name": "pomfret-dashboards",
+  "version": "0.1.0",
+  "description": "Turn a Google Sheet into a Pomfret-styled dashboard, change it in plain English, and publish it. For Pomfret School staff; no coding needed.",
+  "author": { "name": "Pomfret School" },
+  "homepage": "https://github.com/PomfretSchool/pomfret-dashboard-kit"
+}
