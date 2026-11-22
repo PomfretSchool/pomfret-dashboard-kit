@@ -57,7 +57,8 @@ Check silently; do only the missing steps. Before each step say in one sentence 
      `{ echo '<style>'; cat ../../kit/pomfret.css; echo '</style><script>'; cat ../../kit/pomfret.js; echo '</script>'; } > kit.html`
    - Before designing, read at least one file in `examples/` closest to their topic and follow its patterns: `CONFIG` block, `PD.page`, `PD.kpis`, `PD.section`, `PD.card`, kit charts. Keep the look: red only for what matters, quiet axes, a plain-English note under every chart.
    - Set `TITLE`, `TAB` and `COLUMNS` in `Code.js` (only the columns the page actually uses), and the same list in `CONFIG.columns`.
-   - `git init`, save point, `clasp push`. Get the preview link: `clasp deployments`, then use the `@HEAD` ID in `https://script.google.com/a/macros/pomfret.org/s/<ID>/dev`. Write `DASHBOARD.md`.
+   - Check the page before pushing: `node --check` the `<script>` block, and if you can, render `index.html` locally with `kit.html` inlined and `google.script.run.getRows` stubbed with the Sheet's rows; look at it for errors.
+   - `git init`, save point, `clasp push --force` (the first push replaces Google's default settings file, and without `--force` clasp just prints "Skipping push" and does nothing; later pushes don't need it). Get the preview link: `clasp deployments`, then use the `@HEAD` ID in `https://script.google.com/a/macros/pomfret.org/s/<ID>/dev`. Write `DASHBOARD.md`.
 5. **Hand over the preview link.** The first time they open it, Google asks them to **Review permissions → choose their pomfret account → Allow**. That lets the dashboard read *this one Sheet*.
 
 ## Changing a dashboard
