@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600&family=Barlow:wght@400;600&family=Cormorant+Garamond:wght@600&display=swap" rel="stylesheet">
+</head>
+<body>
+<div id="app"></div>
+<?!= include('kit') ?>
+<script>
+// ============================================================ 1. SETTINGS
+const CONFIG = {
+  kicker: "Pomfret School",
+  title: "Dashboard",
+  subtitle: "",
+  asOf: null,                 // null = today
+  source: "Google Sheet",
+  columns: [],                // same list as COLUMNS in Code.js
+  fileLoad: false,            // data comes from the Sheet, not dropped files
+  footnote: "",
+};
+
+// ============================================================ 2. DATA (live from the Sheet on every page load)
+function loadData() {
+  return new Promise((ok, fail) => google.script.run.withSuccessHandler(ok).withFailureHandler(fail).getRows());
+}
+
+// ============================================================ 3. RENDER
+function render(rows) {
+  const R = PD.objects(rows);
+  const { kpis, grid } = PD.page(CONFIG);
+  PD.kpis(kpis, [{ label: "Rows in the Sheet", value: PD.fmt.int(R.length), hot: true }]);
+  PD.card(grid, { title: "First rows", span: 12 }, (el) => PD.table(el, { rows: R.slice(0, 10), columns: CONFIG.columns.map((c) => ({ key: c, label: c })) }));
+}
+
+PD.start(CONFIG, loadData, render);
+</script>
+</body>
+</html>

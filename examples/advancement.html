@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Advancement · Pomfret</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600&family=Barlow:wght@400;600&family=Cormorant+Garamond:wght@600&display=swap" rel="stylesheet">
+<style>/*KIT_CSS*/</style>
+</head>
+<body>
+<div id="app"></div>
+<script>/*KIT_JS*/</script>
+<script>
+// ============================================================ 1. SETTINGS
+const CONFIG = {
+  kicker: "Advancement",
+  title: "Donor retention",
+  subtitle: "Who keeps giving, who slipped away, and who to call before June 30. One row per donor, with one giving column per fiscal year.",
+  asOf: "2026-11-16",
+  source: "advancement_donor_history.csv",
+  sheet: "Advancement",
+  hasNames: true,
+  columns: ["donor_id", "donor_name", "constituency", "class_or_parent_year", "first_gift_fy", "fy23", "fy24", "fy25", "fy26", "fy27_ytd"],
+  footnote: "Sample data: donors and gifts are invented. LYBUNT = gave Last Year But Unfortunately Not This year.",
+};
+
+// ============================================================ 2. DATA
+const CSV_DATA = /*DATA:advancement_donor_history.csv*/"";
+async function loadData() {
+  return PD.parseCSV(CSV_DATA);
+}
+
+// ============================================================ 3. RENDER
+function render(rows) {
+  const header = rows[0].map((h) => h.trim());
+  // every column named fy23, fy24 … (and fy27_ytd) is a giving year — new years just work
+  const fyCols = header.filter((h) => /^fy\d{2}/i.test(h)).sort();
+  const yearNum = (c) => +c.match(/\d{2}/)[0];
+  const years = fyCols.map(yearNum);
+  const curCol = fyCols[fyCols.length - 1], lastCol = fyCols[fyCols.length - 2], prevCol = fyCols[fyCols.length - 3];
+  const FY = (c) => "FY" + yearNum(c) + (/ytd/i.test(c) ? " YTD" : "");
+
+  const D = PD.objects(rows).map((r) => {
+    const g = {};
+    fyCols.forEach((c) => { const v = PD.num(r[c]); g[yearNum(c)] = isNaN(v) ? 0 : v; });
+    let first = +String(r.first_gift_fy).replace(/\D/g, "").slice(-2);   // "FY05" -> 5, "FY88" -> -12
+    if (first > 50) first -= 100;
+    return { ...r, g, first };
+  });
+  const gave = (d, y) => d.g[y] > 0;
+  const gaveBefore = (d, y) => d.first < y - 1 || years.some((z) => z < y - 1 && gave(d, z));
+  const flow = (y) => {
+    const out = { retained: 0, recaptured: 0, newd: 0, lapsed: 0, donors: 0, prior: 0, dollars: 0 };
+    D.forEach((d) => {
+      const now = gave(d, y), then = gave(d, y - 1);
+      if (then) out.prior++;
+      if (now) { out.donors++; out.dollars += d.g[y]; }
+      if (now && then) out.retained++;
+      else if (now && d.first === y) out.newd++;
+      else if (now && gaveBefore(d, y)) out.recaptured++;
+      else if (now) out.newd++;
+      if (then && !now) out.lapsed++;
+    });
+    out.rate = out.retained / Math.max(1, out.prior);
+    return out;
+  };
+  const yCur = yearNum(curCol), yLast = yearNum(lastCol), yPrev = yearNum(prevCol);
+  const fl = {}; years.slice(1).forEach((y) => (fl[y] = flow(y)));
+  const L = fl[yLast], Pv = fl[yPrev];
+  const lybunt = D.filter((d) => gave(d, yLast) && !gave(d, yCur));
+  const renewed = D.filter((d) => gave(d, yLast) && gave(d, yCur));
+
+  const { kpis, grid } = PD.page(CONFIG);
+  PD.kpis(kpis, [
+    { label: `Donor retention, FY${yLast}`, value: PD.fmt.pct(L.rate), delta: L.rate - Pv.rate, deltaText: PD.fmt.pts(L.rate - Pv.rate), detail: `vs. FY${yPrev}`, hot: true,
+      spark: years.slice(1, -1).map((y) => fl[y].rate) },
+    { label: `Donors, FY${yLast}`, value: PD.fmt.int(L.donors), delta: L.donors / Pv.donors - 1, deltaText: PD.fmt.signed(L.donors / Pv.donors - 1), detail: `${PD.fmt.money(L.dollars)} given` },
+    { label: `Lapsed after FY${yPrev}`, value: PD.fmt.int(L.lapsed), detail: `${L.newd} new + ${L.recaptured} recaptured offset them`, goodWhenUp: false },
+    { label: `LYBUNT, ${FY(curCol)}`, value: PD.fmt.int(lybunt.length), detail: `${PD.fmt.money(PD.sum(lybunt, (d) => d.g[yLast]))} given last year, not yet this year` },
+    { label: "Renewed so far", value: PD.fmt.pct(renewed.length / L.donors), detail: `of FY${yLast} donors have given in FY${yCur}` },
+  ]);
+
+  // ---- donor flow
+  PD.card(grid, { title: "Donor flow, year over year", note: `Above the line are donors who gave that year: <b>retained</b> from the year before, <b>recaptured</b> after a gap, and <b>new</b>. Below the line, in <b style="color:var(--red)">red</b>, are last year's donors who did not give again. ${FY(curCol)} is the year so far.`, span: 8 }, (el) => {
+    const ys = years.slice(1), cats = ys.map((y) => (y === yCur ? FY(curCol) : "FY" + y));
+    el.insertAdjacentHTML("beforebegin", PD.legend([{ label: "Retained", color: "var(--ink-2)" }, { label: "Recaptured", color: "var(--context)" }, { label: "New", color: "var(--context-2)" }, { label: "Lapsed", color: "var(--red)" }]));
+    PD.columns(el, { categories: cats, height: 290, markIndex: ys.indexOf(yLast), series: [
+      { name: "Retained", values: ys.map((y) => fl[y].retained), color: "var(--ink-2)" },
+      { name: "Recaptured", values: ys.map((y) => fl[y].recaptured), color: "var(--context)" },
+      { name: "New", values: ys.map((y) => fl[y].newd), color: "var(--context-2)" },
+      { name: "Lapsed", values: ys.map((y) => (y === yCur ? 0 : -fl[y].lapsed)), color: "var(--red)" },
+    ], valueLabels: true, labelFmt: (v) => PD.fmt.int(v) + " donors", negLabelFmt: (v) => PD.fmt.int(v) + " lapsed" });
+  });
+
+  PD.card(grid, { title: "Retention by constituency", note: `Share of each group's FY${yPrev - 1} → FY${yPrev} donors and FY${yPrev} → FY${yLast} donors who gave again. The biggest drop is in red.`, span: 4 }, (el) => {
+    const rate = (y, c) => { const a = D.filter((d) => d.constituency === c && gave(d, y - 1)); return a.filter((d) => gave(d, y)).length / Math.max(1, a.length); };
+    const items = PD.uniq(D.map((d) => d.constituency)).map((c) => ({ label: c, a: rate(yPrev, c), b: rate(yLast, c) }));
+    const worst = items.slice().sort((p, q) => (p.b - p.a) - (q.b - q.a))[0]; worst.hot = true;
+    PD.slope(el, { items, leftLabel: "FY" + yPrev, rightLabel: "FY" + yLast, height: 300, fmt: (v) => PD.fmt.pct(v) });
+  });
+
+  // ---- why it matters
+  PD.section(grid, "<b>Habits</b> · the longer someone gives, the more likely they give again");
+  PD.card(grid, { title: "Retention by giving streak", note: `FY${yPrev} donors, grouped by how many years in a row they had given. The bar is the share who gave again in FY${yLast}.`, span: 6 }, (el) => {
+    const streak = (d) => { let k = 0; for (let y = yPrev; years.includes(y) && gave(d, y); y--) k++; return d.first === yPrev ? 1 : Math.min(k, 3); };
+    const g = PD.group(D.filter((d) => gave(d, yPrev)), streak);
+    const lab = { 1: "First year or returning", 2: "2 years in a row", 3: "3+ years in a row" };
+    PD.bars(el, { max: 1, fmt: (v) => PD.fmt.pct(v), items: [1, 2, 3].filter((k) => g.has(k)).map((k) => ({ label: lab[k], sub: g.get(k).length, value: g.get(k).filter((d) => gave(d, yLast)).length / g.get(k).length, hot: k === 1 })) });
+    el.appendChild(PD.el("p", { class: "pd-note", style: "margin-top:12px" }, "Second gifts are what build loyalty. A thank-you call after a first gift is the cheapest retention work there is."));
+  });
+  PD.card(grid, { title: "Retention by gift size", note: `FY${yPrev} donors by gift size. The bar is the share who gave again in FY${yLast}.`, span: 6 }, (el) => {
+    const bands = [[0, 100, "Under $100"], [100, 500, "$100–499"], [500, 1000, "$500–999"], [1000, 5000, "$1k–4.9k"], [5000, 25000, "$5k–24.9k"], [25000, 1e12, "$25k+"]];
+    const base = D.filter((d) => gave(d, yPrev));
+    PD.bars(el, { max: 1, fmt: (v) => PD.fmt.pct(v), items: bands.map(([lo, hi, label]) => { const a = base.filter((d) => d.g[yPrev] >= lo && d.g[yPrev] < hi); return { label, sub: a.length, value: a.filter((d) => gave(d, yLast)).length / Math.max(1, a.length), hot: hi <= 100 }; }).filter((i) => i.sub) });
+  });
+
+  // ---- action list
+  PD.section(grid, `<b>Action</b> · LYBUNT, ${FY(curCol)}`);
+  PD.card(grid, { title: "Gave last year, not yet this year", note: `The ${PD.fmt.int(lybunt.length)} FY${yLast} donors who have not renewed, sorted by last year's gift. Filter by constituency. Click a column header to sort. Names are hidden unless you turn them on.`, span: 8, flag: true }, (el, ctl) => {
+    const cons = ["All", ...PD.uniq(D.map((d) => d.constituency))];
+    PD.seg(ctl, "lyCons", cons, "All");
+    const rows = lybunt.filter((d) => PD.ui.lyCons === "All" || d.constituency === PD.ui.lyCons);
+    PD.table(el, { id: "ly", rows, max: 40, sortKey: "last", columns: [
+      { key: "donor", label: "Donor", html: (d) => PD.who(d.donor_name, d.donor_id), sort: (d) => d.donor_name },
+      { key: "constituency", label: "Group", html: (d) => PD.esc(d.constituency) + (d.class_or_parent_year ? ` <span class="muted">${PD.esc(d.class_or_parent_year)}</span>` : "") },
+      { key: "hist", label: "History", html: (d) => years.slice(0, -1).map((y) => `<span title="FY${y}" style="display:inline-block;width:9px;height:9px;margin-right:2px;background:${gave(d, y) ? "var(--ink-2)" : "var(--track)"}"></span>`).join(""), sort: (d) => years.filter((y) => gave(d, y)).length },
+      { key: "prev", label: "FY" + yPrev, r: true, html: (d) => (d.g[yPrev] ? PD.fmt.dollars(d.g[yPrev]) : '<span class="muted">–</span>'), sort: (d) => d.g[yPrev] },
+      { key: "last", label: "FY" + yLast, r: true, html: (d) => `<b>${PD.fmt.dollars(d.g[yLast])}</b>`, sort: (d) => d.g[yLast] },
+      { key: "life", label: "Lifetime", r: true, html: (d) => PD.fmt.money(PD.num(d.lifetime_giving)), sort: (d) => PD.num(d.lifetime_giving) },
+    ] });
+  });
+  PD.card(grid, { title: `${FY(curCol)} renewals by group`, note: `Share of each group's FY${yLast} donors who have already given this year. The black tick is FY${yLast}'s full-year retention.`, span: 4 }, (el) => {
+    const g = PD.group(D.filter((d) => gave(d, yLast)), "constituency");
+    const fullRate = (c) => { const a = D.filter((d) => d.constituency === c && gave(d, yPrev)); return a.filter((d) => gave(d, yLast)).length / Math.max(1, a.length); };
+    PD.bars(el, { max: 1, fmt: (v) => PD.fmt.pct(v), items: [...g].map(([c, a]) => ({ label: c, sub: a.length, value: a.filter((d) => gave(d, yCur)).length / a.length, ref: fullRate(c) })).sort((a, b) => b.value - a.value) });
+    el.appendChild(PD.el("p", { class: "pd-note", style: "margin-top:12px" }, "Most renewals come in December and June, so mid-November numbers are low. Compare groups to each other, not to the tick."));
+  });
+}
+
+PD.start(CONFIG, loadData, render);
+</script>
+</body>
+</html>

@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dean of Students · Pomfret</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600&family=Barlow:wght@400;600&family=Cormorant+Garamond:wght@600&display=swap" rel="stylesheet">
+<style>/*KIT_CSS*/
+.sparkrows { display: grid; grid-template-columns: minmax(120px, 1fr) 160px 60px 70px; gap: 6px 12px; align-items: center; font-family: var(--cond); font-size: 14.5px; }
+.sparkrows .h { color: var(--muted); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; border-bottom: 1px solid var(--ink); padding-bottom: 3px; }
+.sparkrows .r { text-align: right; font-variant-numeric: tabular-nums; }
+.pill { cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>/*KIT_JS*/</script>
+<script>
+// ============================================================ 1. SETTINGS
+const CONFIG = {
+  kicker: "Dean of Students",
+  title: "Attendance, check-in & restrictions",
+  subtitle: "Weekly roll-up for every student. Use it to see which dorms are slipping, which adults to bring in, and which students need a nudge before it becomes a pattern.",
+  asOf: "2026-11-16",
+  source: "deans_office_attendance_weekly.csv",
+  sheet: "Dean of Students",
+  hasNames: true,
+  recentWeeks: 3,                   // "lately" = the last N weeks
+  watchMisses: 10,                  // put a student on the watch list at this many misses in recentWeeks
+  columns: ["week_of", "student_id", "student", "grade", "dorm", "dorm_head", "advisor", "boarding_day", "classes_missed",
+            "classes_late", "chapel_missed", "seated_meal_missed", "checkin_missed", "checkin_late", "study_hall_missed", "restriction"],
+  footnote: "Sample data: students and adults are invented, but dorm names are real. Counts are per week. Day students have no check-in.",
+};
+
+// ============================================================ 2. DATA
+const CSV_DATA = /*DATA:deans_office_attendance_weekly.csv*/"";
+async function loadData() {
+  return PD.parseCSV(CSV_DATA);
+}
+
+// ============================================================ 3. RENDER
+const METRICS = [
+  ["checkin_missed", "Check-ins missed"], ["checkin_late", "Check-ins late"], ["classes_missed", "Classes missed"],
+  ["classes_late", "Classes late"], ["chapel_missed", "Chapel / School Meeting"], ["seated_meal_missed", "Seated meals missed"],
+  ["study_hall_missed", "Study hall missed"],
+];
+function render(rows) {
+  const W = PD.objects(rows).map((r) => {
+    // wk is ISO so weeks sort right even when Google Sheets displays dates as 9/7/2026
+    const o = { ...r, wk: PD.date(r.week_of) ? PD.iso(PD.date(r.week_of)) : r.week_of, d: PD.date(r.week_of), boarder: /board/i.test(r.boarding_day), restricted: !!r.restriction };
+    METRICS.forEach(([k]) => (o[k] = PD.n0(r[k])));
+    o.misses = o.checkin_missed + o.classes_missed + o.chapel_missed + o.seated_meal_missed + o.study_hall_missed;
+    return o;
+  });
+  const weeks = PD.uniq(W.map((r) => r.wk)).sort();
+  const lastWk = weeks[weeks.length - 1], recent = weeks.slice(-CONFIG.recentWeeks), before = weeks.slice(-CONFIG.recentWeeks - 4, -CONFIG.recentWeeks);
+  const wkLabel = (w) => { const d = PD.date(w); return `${d.getMonth() + 1}/${d.getDate()}`; };
+  const inW = (ws) => W.filter((r) => ws.includes(r.wk));
+  const per = (rs, k) => PD.sum(rs, (r) => r[k]);
+
+  // students roll-up
+  const S = [...PD.group(W, "student_id")].map(([id, rs]) => {
+    const r0 = rs[rs.length - 1], rec = rs.filter((r) => recent.includes(r.wk));
+    const byWk = weeks.map((w) => { const x = rs.find((r) => r.wk === w); return x ? x.misses : 0; });
+    return { id, name: r0.student, grade: r0.grade, dorm: r0.dorm, head: r0.dorm_head, advisor: r0.advisor, boarder: r0.boarder,
+      byWk, recent: PD.sum(rec, (r) => r.misses), ck: per(rec, "checkin_missed"), cls: per(rec, "classes_missed"),
+      other: per(rec, "chapel_missed") + per(rec, "seated_meal_missed") + per(rec, "study_hall_missed"),
+      early: PD.sum(byWk.slice(0, 4)) / 4, late: PD.sum(byWk.slice(-CONFIG.recentWeeks)) / CONFIG.recentWeeks,
+      restriction: (rs.find((r) => r.wk === lastWk) || {}).restriction || "", restrictions: rs.filter((r) => r.restricted).length };
+  });
+  S.forEach((s) => (s.flag = s.recent >= CONFIG.watchMisses || (s.late >= 3 && s.late >= 2 * Math.max(0.5, s.early))));
+  const flagged = S.filter((s) => s.flag);
+
+  const P = PD.page(CONFIG), grid = P.grid;
+  const lw = inW([lastWk]), prior = inW(before);
+  const avg = (k) => per(prior, k) / Math.max(1, before.length);
+  const k = (key, label, hot) => { const now = per(lw, key), a = avg(key); return { label: label + ", week of " + wkLabel(lastWk), value: PD.fmt.int(now), delta: now / a - 1, deltaText: PD.fmt.signed(now / a - 1), goodWhenUp: false, detail: `vs. ${a.toFixed(0)}/wk the four weeks before`, hot, spark: weeks.map((w) => per(inW([w]), key)) }; };
+  PD.kpis(P.kpis, [
+    k("checkin_missed", "Check-ins missed", true), k("classes_missed", "Classes missed"),
+    { label: "On restriction now", value: PD.fmt.int(lw.filter((r) => r.restricted).length), detail: `${lw.filter((r) => /campus/i.test(r.restriction)).length} campus · ${lw.filter((r) => /dorm/i.test(r.restriction)).length} dorm`, spark: weeks.map((w) => inW([w]).filter((r) => r.restricted).length) },
+    { label: "Students to watch", value: PD.fmt.int(flagged.length), hot: true, detail: `${CONFIG.watchMisses}+ misses in ${CONFIG.recentWeeks} weeks, or doubling` },
+  ]);
+
+  const sel = PD.ui.sel || null;   // {type:'dorm'|'advisor', key}
+  const setSel = (type, key) => { PD.ui.sel = sel && sel.type === type && sel.key === key ? null : { type, key }; PD.rerender(); };
+
+  // ---- dorm heatmap
+  PD.section(grid, "<b>Dorms</b> · where check-in is slipping");
+  PD.card(grid, { title: "Missed check-ins per 10 boarders, by dorm and week", note: `Darker red means more misses. The right column is the last ${CONFIG.recentWeeks} weeks. Each row shows the dorm head. Click a dorm to list its students below.`, span: 8 }, (el) => {
+    const dorms = [...PD.group(W.filter((r) => r.boarder), "dorm")].map(([d, rs]) => {
+      const n = new Set(rs.map((r) => r.student_id)).size;
+      const vals = weeks.map((w) => (per(rs.filter((r) => r.wk === w), "checkin_missed") / n) * 10);
+      return { key: d, label: d, sub: rs[0].dorm_head, n, vals, recent: (per(rs.filter((r) => recent.includes(r.wk)), "checkin_missed") / n / recent.length) * 10 };
+    }).sort((a, b) => b.recent - a.recent);
+    PD.heat(el, { rows: dorms, cols: weeks.map(wkLabel), values: dorms.map((d) => d.vals), labelWidth: 180, fmt: (v) => (v >= 0.5 ? v.toFixed(0) : ""),
+      tipFmt: (v, ri) => `${v.toFixed(1)} missed per 10 boarders (${dorms[ri].n} in dorm)`,
+      total: { label: "Recent", fmt: (r) => `<span style="color:${r.recent >= 6 ? "var(--red)" : "inherit"}">${r.recent.toFixed(1)}</span>` },
+      onRow: (key) => setSel("dorm", key), selected: sel && sel.type === "dorm" ? sel.key : null });
+  });
+  PD.card(grid, { title: "Adults to bring in", note: `Advisors ranked by how many of their advisees are on the watch list. Click a name to see those students.`, span: 4 }, (el) => {
+    const g = [...PD.group(flagged, "advisor")].map(([a, ss]) => ({ label: a, value: ss.length, sub: ss.map((s) => s.dorm).filter((d, i, arr) => arr.indexOf(d) === i).slice(0, 2).join(", "), hot: ss.length >= 2, onClick: () => setSel("advisor", a) }))
+      .sort((a, b) => b.value - a.value).slice(0, 12);
+    PD.bars(el, { items: g, valueText: null, fmt: (v) => v + (v === 1 ? " student" : " students") });
+  });
+
+  // ---- students
+  PD.section(grid, "<b>Students</b> · who to lean on" + (sel ? ` · filtered to ${sel.type} <b>${PD.esc(sel.key)}</b> <a href="#" id="clr" style="color:var(--muted)">clear</a>` : ""));
+  const clr = document.getElementById("clr"); if (clr) clr.onclick = (e) => { e.preventDefault(); PD.ui.sel = null; PD.rerender(); };
+  PD.card(grid, { title: sel ? `${sel.key}: students` : "Watch list", note: sel ? `Everyone in ${sel.key} with at least one miss lately, sorted by recent misses.` : `Students with ${CONFIG.watchMisses}+ misses in the last ${CONFIG.recentWeeks} weeks, or whose misses have doubled since September. The sparkline shows weekly misses this term. Names are hidden unless you turn them on.`, span: 8, flag: !sel }, (el) => {
+    const rows = sel ? S.filter((s) => s[sel.type === "dorm" ? "dorm" : "advisor"] === sel.key && (sel.type === "advisor" ? s.flag : s.recent > 0)) : flagged;
+    PD.table(el, { id: "watch", rows, sortKey: "recent", max: 30, hot: (s) => s.recent >= CONFIG.watchMisses + 4, empty: "No one to flag. Nice.", columns: [
+      { key: "name", label: "Student", html: (s) => PD.who(s.name, s.id), sort: (s) => s.name },
+      { key: "grade", label: "Gr", r: true },
+      { key: "dorm", label: "Dorm", html: (s) => `<span class="pill" onclick="PD.ui.sel={type:'dorm',key:'${PD.esc(s.dorm)}'};PD.rerender()">${PD.esc(s.dorm)}</span>` },
+      { key: "advisor", label: "Advisor", html: (s) => `<span class="pill" onclick="PD.ui.sel={type:'advisor',key:'${PD.esc(s.advisor)}'};PD.rerender()">${PD.esc(s.advisor)}</span>` },
+      { key: "trend", label: "This term", html: (s) => PD.spark(s.byWk, { w: 90, h: 20, min: 0 }), sort: (s) => s.late - s.early },
+      { key: "ck", label: "Check-in", r: true, html: (s) => (s.boarder ? s.ck : '<span class="muted">day</span>'), sort: (s) => s.ck },
+      { key: "cls", label: "Class", r: true },
+      { key: "other", label: "Other", r: true },
+      { key: "recent", label: "Total", r: true, html: (s) => `<b>${s.recent}</b>` },
+      { key: "restriction", label: "Now", html: (s) => (s.restriction ? `<span class="pd-tag ${/campus/i.test(s.restriction) ? "solid" : "red"}">${PD.esc(s.restriction.replace(" restriction", ""))}</span>` : ""), sort: (s) => s.restrictions },
+    ] });
+  });
+  PD.card(grid, { title: "Restrictions by week", note: "Students on campus or dorm restriction each week. Restrictions follow a heavy week by about a week.", span: 4 }, (el) => {
+    el.insertAdjacentHTML("beforebegin", PD.legend([{ label: "Campus", color: "var(--red)" }, { label: "Dorm", color: "var(--context)" }]));
+    PD.columns(el, { categories: weeks.map(wkLabel), height: 220, markIndex: weeks.length - 1, valueLabels: true, series: [
+      { name: "Campus", values: weeks.map((w) => inW([w]).filter((r) => /campus/i.test(r.restriction)).length), color: "var(--red)" },
+      { name: "Dorm", values: weeks.map((w) => inW([w]).filter((r) => /dorm/i.test(r.restriction)).length), color: "var(--context)" }] });
+  });
+
+  // ---- patterns
+  PD.section(grid, "<b>Patterns</b> · the whole school, week by week");
+  PD.card(grid, { title: "Every measure at a glance", note: `Weekly totals this term. The red dot is the week of ${wkLabel(lastWk)}. "vs. avg" compares it with the term average.`, span: 6 }, (el) => {
+    let h = `<div class="sparkrows"><div class="h">Measure</div><div class="h">Since ${wkLabel(weeks[0])}</div><div class="h r">Last wk</div><div class="h r">vs. avg</div>`;
+    METRICS.forEach(([key, label]) => {
+      const v = weeks.map((w) => per(inW([w]), key)), last = v[v.length - 1], a = PD.sum(v) / v.length, ch = last / a - 1;
+      h += `<div>${label}</div><div>${PD.spark(v, { w: 160, h: 22, min: 0 })}</div><div class="r"><b>${last}</b></div><div class="r" style="color:${ch > 0.25 ? "var(--red)" : "var(--muted)"}">${PD.fmt.signed(ch)}</div>`;
+    });
+    el.innerHTML = h + "</div>";
+  });
+  PD.card(grid, { title: "Classes missed per student, by grade", note: "Weekly class absences divided by the number of students in each grade. The grade with the highest recent rate is in red.", span: 6 }, (el) => {
+    const grades = PD.uniq(W.map((r) => r.grade)).sort((a, b) => a - b);
+    const rate = (g) => weeks.map((w, i) => { const rs = W.filter((r) => r.grade === g && r.wk === w); return [i, per(rs, "classes_missed") / Math.max(1, rs.length)]; });
+    const series = grades.map((g) => ({ name: g + "th grade", points: rate(g) }));
+    const worst = series.slice().sort((a, b) => b.points[b.points.length - 1][1] - a.points[a.points.length - 1][1])[0];
+    series.forEach((s) => Object.assign(s, s === worst ? { color: "var(--red)", width: 2.4, strong: true } : { color: "var(--context)", width: 1.3 }));
+    PD.line(el, { series, height: 230, yFmt: (v) => v.toFixed(1), xTicks: weeks.map((w, i) => ({ v: i, label: i % 2 ? "" : wkLabel(w) })), tipX: (i) => "Week of " + wkLabel(weeks[i]) });
+  });
+}
+
+PD.start(CONFIG, loadData, render);
+</script>
+</body>
+</html>

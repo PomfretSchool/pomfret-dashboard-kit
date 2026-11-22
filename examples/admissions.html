@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admission · Pomfret</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600&family=Barlow:wght@400;600&family=Cormorant+Garamond:wght@600&display=swap" rel="stylesheet">
+<style>/*KIT_CSS*/</style>
+</head>
+<body>
+<div id="app"></div>
+<script>/*KIT_JS*/</script>
+<script>
+// ============================================================ 1. SETTINGS
+const CONFIG = {
+  kicker: "Admission Office",
+  title: "Admission funnel & reach",
+  subtitle: "Where this cycle stands against the last two, how inquiries become students, and where our families come from.",
+  asOf: "2026-11-16",                 // set to null to use today's date
+  source: "admissions_prospects.csv",
+  sheet: "Admissions",                // tab name when the data lives in Google Sheets / XLSX
+  columns: ["prospect_id", "cycle", "entry_year", "grade_applying", "boarding_day", "city", "state", "country",
+            "lat", "lon", "source", "inquiry_date", "visit_date", "app_submitted", "decision", "enrolled"],
+  footnote: "Sample data: every prospect is invented. The file holds names; this page never shows them.",
+};
+
+// ============================================================ 2. DATA (the only place data comes from)
+const CSV_DATA = /*DATA:admissions_prospects.csv*/"";
+async function loadData() {
+  return PD.parseCSV(CSV_DATA);       // Apps Script version: swap this body for google.script.run
+}
+
+// ============================================================ 3. RENDER
+const STATES = {AL:"Alabama",AK:"Alaska",AZ:"Arizona",AR:"Arkansas",CA:"California",CO:"Colorado",CT:"Connecticut",DE:"Delaware",DC:"District of Columbia",FL:"Florida",GA:"Georgia",HI:"Hawaii",ID:"Idaho",IL:"Illinois",IN:"Indiana",IA:"Iowa",KS:"Kansas",KY:"Kentucky",LA:"Louisiana",ME:"Maine",MD:"Maryland",MA:"Massachusetts",MI:"Michigan",MN:"Minnesota",MS:"Mississippi",MO:"Missouri",MT:"Montana",NE:"Nebraska",NV:"Nevada",NH:"New Hampshire",NJ:"New Jersey",NM:"New Mexico",NY:"New York",NC:"North Carolina",ND:"North Dakota",OH:"Ohio",OK:"Oklahoma",OR:"Oregon",PA:"Pennsylvania",RI:"Rhode Island",SC:"South Carolina",SD:"South Dakota",TN:"Tennessee",TX:"Texas",UT:"Utah",VT:"Vermont",VA:"Virginia",WA:"Washington",WV:"West Virginia",WI:"Wisconsin",WY:"Wyoming"};
+
+function render(rows) {
+  const asOf = PD.asOf(CONFIG);
+  const P = PD.objects(rows).map((r) => ({
+    ...r,
+    entry: +r.entry_year,
+    inq: PD.date(r.inquiry_date), visit: PD.date(r.visit_date), app: PD.date(r.app_submitted),
+    admit: /^admit/i.test(r.decision), enrolled: /^y/i.test(r.enrolled),
+    lat: PD.num(r.lat), lon: PD.num(r.lon),
+  })).filter((r) => r.inq);
+
+  const cycles = PD.uniq(P.map((r) => r.cycle)).sort();
+  const cur = cycles[cycles.length - 1], prev = cycles[cycles.length - 2], prev2 = cycles[cycles.length - 3];
+  const done = cycles.filter((c) => c !== cur);             // complete cycles
+  const startOf = (c) => new Date(+P.find((r) => r.cycle === c).entry - 1, 6, 1);   // July 1
+  const dayOf = (c, d) => PD.days(startOf(c), d);
+  const today = dayOf(cur, asOf);
+  const by = PD.group(P, "cycle");
+  const toDate = (c, f) => by.get(c).filter((r) => r[f] && dayOf(c, r[f]) <= today).length;
+
+  const { kpis, grid } = PD.page(CONFIG);
+
+  // ---- KPIs: this cycle vs. the same day last cycle
+  const inqNow = toDate(cur, "inq"), inqThen = toDate(prev, "inq");
+  const visNow = toDate(cur, "visit"), visThen = toDate(prev, "visit");
+  const appsPrevFinal = by.get(prev).filter((r) => r.app).length;
+  const projected = Math.round(appsPrevFinal * (inqNow / inqThen));
+  const last = by.get(prev), admitted = last.filter((r) => r.admit), enrolled = last.filter((r) => r.enrolled);
+  const weekly = (c, f) => { const out = []; for (let w = 0; w <= Math.floor(today / 7); w++) out.push(by.get(c).filter((r) => r[f] && dayOf(c, r[f]) <= w * 7).length); return out; };
+  PD.kpis(kpis, [
+    { label: `Inquiries, ${cur}`, value: PD.fmt.int(inqNow), delta: inqNow / inqThen - 1, deltaText: PD.fmt.signed(inqNow / inqThen - 1), detail: `vs. ${PD.fmt.int(inqThen)} this date last year`, spark: weekly(cur, "inq"), hot: true },
+    { label: "Visits & interviews", value: PD.fmt.int(visNow), delta: visNow / visThen - 1, deltaText: PD.fmt.signed(visNow / visThen - 1), detail: `vs. ${PD.fmt.int(visThen)} last year` },
+    { label: "Projected applications", value: "≈" + PD.fmt.int(projected), detail: `if inquiries convert like ${prev} (${appsPrevFinal} apps)`, tip: "Last cycle's final applications × this year's inquiry pace" },
+    { label: `Admit rate, ${prev}`, value: PD.fmt.pct(admitted.length / appsPrevFinal), detail: `${admitted.length} admitted of ${appsPrevFinal}` },
+    { label: `Yield, ${prev}`, value: PD.fmt.pct(enrolled.length / admitted.length), detail: `${enrolled.length} enrolled of ${admitted.length} admitted` },
+  ]);
+
+  // ---- Pace chart
+  PD.section(grid, "<b>Pace</b> · is this cycle ahead or behind?");
+  PD.card(grid, { title: "Running total by day of the cycle", note: `Each line starts July 1. <b style="color:var(--red)">${cur}</b> in red, earlier cycles in gray, lined up on this year's calendar. The dashed line is today.`, span: 8 }, (el, ctl) => {
+    const metric = { Inquiries: "inq", Visits: "visit", Applications: "app" };
+    PD.seg(ctl, "pace", Object.keys(metric), "Inquiries");
+    const f = metric[PD.ui.pace], s0 = startOf(cur), end = 300;
+    const series = [prev2, prev, cur].filter(Boolean).map((c) => {
+      const days = by.get(c).filter((r) => r[f]).map((r) => dayOf(c, r[f])).sort((a, b) => a - b);
+      const pts = []; let k = 0;
+      for (let d = 0; d <= (c === cur ? today : end); d += 3) { while (k < days.length && days[k] <= d) k++; pts.push([PD.addDays(s0, d), k]); }
+      return { name: c, points: pts, color: c === cur ? "var(--red)" : c === prev ? "var(--ink-2)" : "var(--context)", width: c === cur ? 2.6 : 1.4, strong: c === cur, labelText: `${c}  ${PD.fmt.int(pts[pts.length - 1][1])}` };
+    });
+    PD.line(el, { series, height: 270, markers: [{ x: asOf, label: "Today" }], xMax: PD.addDays(s0, end + 2),
+      bands: [{ from: new Date(s0.getFullYear() + 1, 0, 1), to: new Date(s0.getFullYear() + 1, 0, 15), label: "Jan 15 deadline" }] });
+  });
+
+  PD.card(grid, { title: `The funnel, ${prev}`, note: `Bars show ${prev}. The black tick is ${prev2 || "two cycles ago"}. Percentages show the share kept at each step.`, span: 4 }, (el) => {
+    const steps = (c) => { const a = by.get(c); return [["Inquired", a.length], ["Visited", a.filter((r) => r.visit).length], ["Applied", a.filter((r) => r.app).length], ["Admitted", a.filter((r) => r.admit).length], ["Enrolled", a.filter((r) => r.enrolled).length]]; };
+    const s1 = steps(prev), s2 = prev2 ? steps(prev2) : null;
+    PD.bars(el, { max: s1[0][1], items: s1.map(([k, v], i) => ({
+      label: k, value: v, ref: s2 ? s2[i][1] : null, hot: k === "Enrolled",
+      valueText: `${PD.fmt.int(v)} <small>${i ? PD.fmt.pct(v / s1[i - 1][1]) : ""}</small>`,
+      tip: s2 ? `${k}: ${v} (${prev2}: ${s2[i][1]})` : null })) });
+    const big = PD.el("div", { class: "pd-note", style: "margin-top:14px" }, `Of every 100 inquiries, about <b>${Math.round((s1[4][1] / s1[0][1]) * 100)}</b> enroll.`);
+    el.appendChild(big);
+  });
+
+  // ---- Maps
+  PD.section(grid, "<b>Reach</b> · where families come from");
+  const stage = { Inquiries: () => true, Applicants: (r) => r.app, Enrolled: (r) => r.enrolled };
+  const pickCycle = () => (PD.ui.mapCycle === "All years" ? P : by.get(PD.ui.mapCycle === "This cycle" ? cur : prev));
+  if (PD.ui.mapCycle == null) PD.ui.mapCycle = "Last cycle";
+  const mapRows = () => pickCycle().filter(stage[PD.ui.mapStage || "Applicants"]);
+  const byCity = (rs) => [...PD.group(rs, (r) => r.city + "|" + (r.state || r.country)).values()].map((g) => ({
+    lat: g[0].lat, lon: g[0].lon, state: g[0].state, value: g.length,
+    label: `${g[0].city}, ${g[0].state || g[0].country}\n${g.length} ${(PD.ui.mapStage || "Applicants").toLowerCase()}` }));
+  const mapNote = () => `${PD.ui.mapStage || "Applicants"} · ${PD.ui.mapCycle === "This cycle" ? cur + " so far" : PD.ui.mapCycle === "Last cycle" ? prev : "all cycles"}. Larger circles mean more families.`;
+
+  PD.card(grid, { title: "United States", note: mapNote() + " States shaded by count.", span: 7 }, (el, ctl) => {
+    PD.seg(ctl, "mapStage", Object.keys(stage), "Applicants");
+    PD.seg(ctl, "mapCycle", ["This cycle", "Last cycle", "All years"], "Last cycle");
+    const us = mapRows().filter((r) => r.country === "United States");
+    const sv = {}; us.forEach((r) => { const n = STATES[r.state]; if (n) sv[n] = (sv[n] || 0) + 1; });
+    PD.usMap(el, { points: byCity(us), stateValues: sv, stateTip: (n, v) => `${v} ${(PD.ui.mapStage || "Applicants").toLowerCase()}`, maxR: 30 });
+  });
+  PD.card(grid, { title: "The world", note: "Drag to spin. Same filters as the US map.", span: 5 }, (el, ctl) => {
+    const views = { Americas: [-75, 22], "Europe & Africa": [12, 22], Asia: [118, 25] };
+    let globe;
+    PD.seg(ctl, "globeView", Object.keys(views), "Americas", (v) => { ctl.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", b.textContent === v)); globe.spin(...views[v]); });
+    if (!PD.ui.globeRot) PD.ui.globeRot = views[PD.ui.globeView].slice();
+    globe = PD.globe(el, { points: byCity(mapRows()), height: Math.min(440, el.clientWidth), maxR: 20 });
+  });
+
+  PD.card(grid, { title: "Top states", note: `${PD.ui.mapStage || "Applicants"}, same filters.`, span: 4 }, (el) => {
+    const g = [...PD.group(mapRows().filter((r) => r.country === "United States"), "state")].map(([k, v]) => ({ label: STATES[k] || k, value: v.length })).sort((a, b) => b.value - a.value).slice(0, 10);
+    g.forEach((x, i) => (x.hot = i === 0));
+    PD.bars(el, { items: g });
+  });
+  PD.card(grid, { title: "Top countries outside the US", note: `${PD.ui.mapStage || "Applicants"}, same filters.`, span: 4 }, (el) => {
+    const intl = mapRows().filter((r) => r.country !== "United States"), all = mapRows().length;
+    const g = [...PD.group(intl, "country")].map(([k, v]) => ({ label: k, value: v.length })).sort((a, b) => b.value - a.value).slice(0, 10);
+    PD.bars(el, { items: g });
+    el.appendChild(PD.el("div", { class: "pd-note", style: "margin-top:10px" }, `International: <b>${PD.fmt.pct(intl.length / Math.max(1, all))}</b> of ${(PD.ui.mapStage || "applicants").toLowerCase()}.`));
+  });
+  PD.card(grid, { title: "Which sources become students?", note: `Share of ${prev} inquiries from each source that enrolled. Small gray text shows the inquiry count.`, span: 4 }, (el) => {
+    const g = [...PD.group(by.get(prev), "source")].map(([k, v]) => ({ label: k, sub: v.length, value: v.filter((r) => r.enrolled).length / v.length })).sort((a, b) => b.value - a.value);
+    g.slice(0, 2).forEach((x) => (x.hot = true));
+    PD.bars(el, { items: g, fmt: (v) => PD.fmt.pct(v, 0) });
+  });
+
+  // ---- Yield
+  PD.section(grid, "<b>Yield</b> · who says yes");
+  PD.card(grid, { title: "Yield by grade and boarding/day", note: `Share of admitted students who enrolled, ${prev}. The black tick is ${prev2 || "two cycles ago"}. The gray number is how many were admitted.`, span: 6 }, (el) => {
+    const keys = []; ["Boarding", "Day"].forEach((b) => ["9th", "10th", "11th", "PG"].forEach((g) => keys.push([b, g])));
+    const y = (c, b, g) => { const a = by.get(c).filter((r) => r.admit && r.boarding_day === b && r.grade_applying === g); return { n: a.length, y: a.length ? a.filter((r) => r.enrolled).length / a.length : NaN }; };
+    const items = keys.map(([b, g]) => { const a = y(prev, b, g), z = prev2 ? y(prev2, b, g) : { y: NaN }; return { label: `${b} · ${g}`, sub: a.n, value: a.y, ref: isNaN(z.y) ? null : z.y, n: a.n }; }).filter((i) => i.n >= 3);
+    const avg = enrolled.length / admitted.length;
+    items.forEach((i) => (i.hot = i.value < avg - 0.08));
+    PD.bars(el, { items, max: 1, fmt: (v) => PD.fmt.pct(v) });
+    el.appendChild(PD.el("div", { class: "pd-note", style: "margin-top:10px" }, `Red rows fall at least 8 points below overall yield (${PD.fmt.pct(avg)}).`));
+  });
+  PD.card(grid, { title: "Aid and yield", note: `${prev}: did families who applied for aid enroll at a different rate?`, span: 6 }, (el) => {
+    const rows = ["Y", "N"].map((a) => { const s = admitted.filter((r) => r.aid_applied === a); return { label: a === "Y" ? "Applied for aid" : "Did not apply", sub: s.length + " admitted", value: s.filter((r) => r.enrolled).length / Math.max(1, s.length) }; });
+    rows[0].hot = true;
+    PD.bars(el, { items: rows, max: 1, fmt: (v) => PD.fmt.pct(v) });
+    const visit = ["visited", "did not visit"].map((k) => { const s = admitted.filter((r) => (k === "visited") === !!r.visit); return { label: "Admitted & " + k, sub: s.length, value: s.filter((r) => r.enrolled).length / Math.max(1, s.length) }; });
+    el.appendChild(PD.el("div", { style: "height:14px" }));
+    const v2 = el.appendChild(PD.el("div"));
+    PD.bars(v2, { items: visit, max: 1, fmt: (v) => PD.fmt.pct(v) });
+  });
+}
+
+PD.start(CONFIG, loadData, render);   // = loadData().then(render), plus theme, resize and file drop
+</script>
+</body>
+</html>

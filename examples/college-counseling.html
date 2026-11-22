@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>College Counseling · Pomfret</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600&family=Barlow:wght@400;600&family=Cormorant+Garamond:wght@600&display=swap" rel="stylesheet">
+<style>/*KIT_CSS*/
+.four { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 24px; }
+.four h4 { font: 600 15px var(--cond); letter-spacing: .08em; text-transform: uppercase; margin: 0; }
+.four h4 small { color: var(--muted); font-weight: 400; letter-spacing: .02em; text-transform: none; margin-left: 6px; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>/*KIT_JS*/</script>
+<script>
+// ============================================================ 1. SETTINGS
+const CONFIG = {
+  kicker: "College Counseling · Class of 2027",
+  title: "Application deadline tracker",
+  subtitle: "Every application, every deadline, every missing piece, split by counselor. Red means act this week.",
+  asOf: "2026-11-16",
+  source: "college_counseling_applications.csv",
+  sheet: "College Counseling",
+  hasNames: true,
+  counselors: ["Bruce", "Sarah", "Art", "Don"],
+  dueSoonDays: 21,                  // "due soon" window (days)
+  columns: ["student_id", "student", "counselor", "college", "tier", "plan", "deadline", "app_status", "counselor_letter",
+            "recommender_1", "rec_1_status", "recommender_2", "rec_2_status", "transcript", "test_scores"],
+  footnote: "Sample data: students are invented. Deadlines follow typical ED/EA/RD dates but check each college.",
+};
+
+// ============================================================ 2. DATA
+const CSV_DATA = /*DATA:college_counseling_applications.csv*/"";
+async function loadData() {
+  return PD.parseCSV(CSV_DATA);
+}
+
+// ============================================================ 3. RENDER
+const sent = (v) => /^(sent|submitted|complete|test-optional|not sending)/i.test(v);
+function render(rows) {
+  const asOf = PD.asOf(CONFIG);
+  const A = PD.objects(rows).map((r) => {
+    const dl = PD.date(r.deadline), left = PD.days(asOf, dl);
+    const missing = [];
+    if (!sent(r.app_status)) missing.push("application");
+    if (!sent(r.counselor_letter)) missing.push("counselor letter");
+    if (!sent(r.rec_1_status)) missing.push("rec: " + r.recommender_1);
+    if (!sent(r.rec_2_status)) missing.push("rec: " + r.recommender_2);
+    if (!sent(r.transcript)) missing.push("transcript");
+    if (/pending/i.test(r.test_scores)) missing.push("test scores");
+    return { ...r, dl, left, missing, submitted: sent(r.app_status), overdue: left < 0 && missing.length > 0 };
+  });
+  const students = [...PD.group(A, "student_id")].map(([id, apps]) => {
+    const s = { id, name: apps[0].student, counselor: apps[0].counselor, apps, flags: [] };
+    const eds = apps.filter((a) => a.plan === "ED");
+    const upcoming = apps.filter((a) => a.left >= 0).sort((a, b) => a.left - b.left);
+    s.next = upcoming[0];
+    s.open = PD.sum(apps, (a) => a.missing.length);
+    apps.filter((a) => a.overdue).forEach((a) => s.flags.push({ sev: 3, text: `Overdue: ${a.college} ${a.plan} (${a.missing.join(", ")})` }));
+    if (eds.length > 1) s.flags.push({ sev: 3, text: `Two binding ED apps: ${eds.map((a) => a.college).join(" + ")}` });
+    apps.filter((a) => a.left >= 0 && a.left <= CONFIG.dueSoonDays && !a.submitted).forEach((a) => s.flags.push({ sev: 2, text: `${a.college} due ${PD.fmt.date(a.dl)}, ${a.app_status.toLowerCase()}` }));
+    const ns = apps.filter((a) => a.left >= 0 && a.left <= 50 && /not started/i.test(a.app_status));
+    if (ns.length >= 3) s.flags.push({ sev: 2, text: `${ns.length} apps not started, due within 50 days` });
+    else ns.filter((a) => a.plan !== "RD").forEach((a) => s.flags.push({ sev: 2, text: `${a.plan} to ${a.college} not started` }));
+    if (!apps.some((a) => /likely/i.test(a.tier))) s.flags.push({ sev: 1, text: "No likely school on the list" });
+    if (apps.length >= 13) s.flags.push({ sev: 1, text: `${apps.length} applications. Is that list too long?` });
+    if (apps.length <= 4) s.flags.push({ sev: 1, text: `Only ${apps.length} applications` });
+    s.sev = Math.max(0, ...s.flags.map((f) => f.sev));
+    return s;
+  });
+
+  const who = PD.ui.counselor || "All";
+  const mine = (x) => who === "All" || x.counselor === who;
+  const As = A.filter(mine), Ss = students.filter(mine);
+  const P = PD.page(CONFIG);
+  // counselor filter sits in the header so it applies to everything
+  const tools = document.querySelector(".pd-tools");
+  const segBox = PD.el("div"); tools.prepend(segBox);
+  PD.seg(segBox, "counselor", ["All", ...CONFIG.counselors], "All");
+
+  const dueSoon = As.filter((a) => a.left >= 0 && a.left <= CONFIG.dueSoonDays && !a.submitted);
+  const overdueItems = PD.sum(As.filter((a) => a.overdue), (a) => a.missing.length);
+  const flagged = Ss.filter((s) => s.sev >= 2);
+  PD.kpis(P.kpis, [
+    { label: `Applications${who === "All" ? "" : " · " + who}`, value: PD.fmt.int(As.length), detail: `${Ss.length} seniors · ${(As.length / Ss.length).toFixed(1)} each` },
+    { label: "Submitted", value: PD.fmt.pct(As.filter((a) => a.submitted).length / As.length), detail: `${As.filter((a) => a.submitted).length} of ${As.length}` },
+    { label: `Due in ${CONFIG.dueSoonDays} days, not submitted`, value: PD.fmt.int(dueSoon.length), hot: dueSoon.length > 0, detail: dueSoon.length ? "earliest " + PD.fmt.date(dueSoon.sort((a, b) => a.left - b.left)[0].dl) : "" },
+    { label: "Overdue pieces", value: PD.fmt.int(overdueItems), hot: overdueItems > 0, detail: "past the deadline and still not sent" },
+    { label: "Students to check on", value: PD.fmt.int(flagged.length), hot: true, detail: "with an overdue or this-week flag" },
+  ]);
+  const grid = P.grid;
+
+  // ---- per-counselor deadline columns
+  PD.card(grid, { title: "Deadlines ahead, week by week", note: `Applications due each week for each counselor, by status: <b style="color:var(--red)">not started</b>, <b>in progress</b>, and <span style="color:var(--context)">submitted</span>. All four panels share one scale.`, span: 12 }, (el) => {
+    el.insertAdjacentHTML("beforebegin", PD.legend([{ label: "Not started", color: "var(--red)" }, { label: "In progress", color: "var(--ink-2)" }, { label: "Submitted", color: "var(--context-2)" }]));
+    const w0 = PD.weekStart(asOf), weeks = [...Array(14)].map((_, i) => PD.addDays(w0, i * 7));
+    const wk = (a) => Math.floor(PD.days(w0, a.dl) / 7);
+    const cs = who === "All" ? CONFIG.counselors : [who];
+    let ymax = 0;
+    const data = cs.map((c) => {
+      const mineA = A.filter((a) => a.counselor === c);
+      const s = ["Not started", "In progress", "Submitted"].map((st) => weeks.map((_, i) => mineA.filter((a) => wk(a) === i && (st === "Submitted" ? a.submitted : a.app_status === st)).length));
+      weeks.forEach((_, i) => (ymax = Math.max(ymax, s[0][i] + s[1][i] + s[2][i])));
+      return { c, s, n: new Set(mineA.map((a) => a.student_id)).size, soon: mineA.filter((a) => a.left >= 0 && a.left <= CONFIG.dueSoonDays && !a.submitted).length };
+    });
+    const box = el.appendChild(PD.el("div", { class: "four" }));
+    // lay out every panel first, then draw, so each chart measures its final width
+    const cells = data.map(({ c, n, soon }) => {
+      const cell = box.appendChild(PD.el("div"));
+      cell.innerHTML = `<h4>${c}<small>${n} students · ${soon ? `<b style="color:var(--red)">${soon} due in ${CONFIG.dueSoonDays} days</b>` : "nothing due in " + CONFIG.dueSoonDays + " days"}</small></h4>`;
+      return cell.appendChild(PD.el("div"));
+    });
+    data.forEach(({ s }, i) => {
+      PD.columns(cells[i], { height: 150, yMax: ymax, yAxisWidth: 28, categories: weeks.map((w) => PD.fmt.date(w)), series: [
+        { name: "Submitted", values: s[2], color: "var(--context-2)" }, { name: "In progress", values: s[1], color: "var(--ink-2)" }, { name: "Not started", values: s[0], color: "var(--red)" }] });
+    });
+  });
+
+  // ---- flags
+  PD.section(grid, "<b>Act</b> · who needs a conversation this week");
+  PD.card(grid, { title: "Students to check on", note: "Red tags are overdue or due this week. Gray tags are about the shape of the list. Sorted by urgency. Turn names on (top right) only on your own screen.", span: 8, flag: true }, (el) => {
+    const rows = Ss.filter((s) => s.flags.length);
+    PD.table(el, { id: "flags", rows, sortKey: "sev", max: 40, hot: (s) => s.sev >= 3, columns: [
+      { key: "name", label: "Student", html: (s) => PD.who(s.name, s.id), sort: (s) => s.name },
+      { key: "counselor", label: "Counselor" },
+      { key: "sev", label: "Flags", html: (s) => s.flags.sort((a, b) => b.sev - a.sev).map((f) => `<span class="pd-tag ${f.sev >= 3 ? "solid" : f.sev === 2 ? "red" : ""}">${PD.esc(f.text)}</span>`).join(" "), sort: (s) => s.sev * 100 + s.flags.length },
+      { key: "next", label: "Next deadline", html: (s) => (s.next ? `${PD.fmt.date(s.next.dl)} <span class="muted">${PD.esc(s.next.college)}</span>` : "–"), sort: (s) => (s.next ? -s.next.left : -999) },
+      { key: "apps", label: "Apps", r: true, html: (s) => s.apps.length, sort: (s) => s.apps.length },
+    ] });
+  });
+  PD.card(grid, { title: "Counselor workload", note: `Counselor letters still pending for deadlines in the next 50 days, and overdue pieces of any kind.`, span: 4 }, (el) => {
+    const items = CONFIG.counselors.map((c) => {
+      const a = A.filter((x) => x.counselor === c);
+      const letters = a.filter((x) => x.left <= 50 && !sent(x.counselor_letter)).length;
+      const od = PD.sum(a.filter((x) => x.overdue), (x) => x.missing.length);
+      return { label: c, value: letters, hot: od > 0, valueText: `${letters} <small>letters${od ? ` · <b style="color:var(--red)">${od} overdue</b>` : ""}</small>`, onClick: () => { PD.ui.counselor = c; PD.rerender(); } };
+    });
+    PD.bars(el, { items });
+    el.appendChild(PD.el("p", { class: "pd-note", style: "margin-top:12px" }, "Click a counselor to filter the whole page."));
+  });
+
+  // ---- readiness strip
+  PD.section(grid, "<b>Readiness</b> · every student, every deadline");
+  PD.card(grid, { title: "Deadline strip", note: "One row per student and one dot per application, placed on its deadline. Dot color shows status: <b style=\"color:var(--red)\">not started</b>, <b>in progress</b>, <span style=\"color:var(--context)\">submitted</span>. A hollow dot means a recommendation, transcript or letter is still missing. Hover a dot for details.", span: 12 }, (el, ctl) => {
+    const c = who === "All" ? (PD.ui.stripC || "Bruce") : who;
+    if (who === "All") PD.seg(ctl, "stripC", CONFIG.counselors, "Bruce");
+    const ss = students.filter((s) => s.counselor === c).sort((a, b) => b.sev - a.sev || a.name.localeCompare(b.name));
+    const W = Math.max(500, el.clientWidth), rowH = 19, lw = 150, H = ss.length * rowH + 30;
+    const first = Math.min(...ss.flatMap((st) => st.apps.map((a) => +a.dl)));
+    const d0 = new Date(Math.min(+PD.addDays(asOf, -25), first - 5 * 864e5)), d1 = new Date(asOf.getFullYear() + 1, 1, 20);
+    const x = PD.scale(+d0, +d1, lw, W - 10);
+    let s = `<svg class="pd-svg" viewBox="0 0 ${W} ${H}">`;
+    for (let d = new Date(d0.getFullYear(), d0.getMonth() + 1, 1); d <= d1; d = new Date(d.getFullYear(), d.getMonth() + 1, 1))
+      s += `<line x1="${x(+d)}" x2="${x(+d)}" y1="0" y2="${H - 20}" stroke="var(--line)"/><text x="${x(+d) + 3}" y="${H - 6}">${PD.fmt.month(d)}</text>`;
+    [["Nov 1", new Date(asOf.getFullYear(), 10, 1)], ["Nov 15", new Date(asOf.getFullYear(), 10, 15)], ["Jan 1", new Date(asOf.getFullYear() + 1, 0, 1)], ["Jan 15", new Date(asOf.getFullYear() + 1, 0, 15)]]
+      .forEach(([l, d]) => (s += `<text x="${x(+d)}" y="${H - 6}" text-anchor="middle" style="font-size:11px">${d.getDate() === 1 ? "" : l}</text>`));
+    s += `<rect x="${x(+asOf)}" y="0" width="${x(+PD.addDays(asOf, CONFIG.dueSoonDays)) - x(+asOf)}" height="${H - 20}" fill="var(--red-soft)"/>`;
+    s += `<line x1="${x(+asOf)}" x2="${x(+asOf)}" y1="0" y2="${H - 20}" stroke="var(--red)" stroke-width="1.5"/>`;
+    ss.forEach((st, i) => {
+      const y = i * rowH + 10;
+      s += `<line x1="${lw}" x2="${W - 10}" y1="${y}" y2="${y}" stroke="var(--line)" stroke-width=".5"/>`;
+      s += `<text x="${lw - 8}" y="${y + 4}" text-anchor="end" class="${st.sev >= 3 ? "lbl-red" : st.sev === 2 ? "lbl-strong" : ""}">${PD.esc(PD.whoText(st.name, st.id))}</text>`;
+      const seen = {};
+      st.apps.forEach((a) => {
+        const k = a.deadline; seen[k] = (seen[k] || 0) + 1;
+        const cx = x(+a.dl) + (seen[k] - 1) * 5, col = a.submitted ? "var(--context)" : /not/i.test(a.app_status) ? "var(--red)" : "var(--ink-2)";
+        const hollow = a.missing.filter((m) => m !== "application").length > 0;
+        s += `<circle cx="${cx}" cy="${y}" r="4.6" fill="${hollow ? "var(--panel)" : col}" stroke="${col}" stroke-width="1.8" data-tip="${PD.esc(`${a.college} · ${a.plan} · due ${PD.fmt.date(a.dl)}\n${a.app_status}${a.missing.length ? "\nMissing: " + a.missing.join(", ") : ""}`)}"/>`;
+      });
+    });
+    el.innerHTML = s + "</svg>";
+  });
+
+  // ---- teachers + colleges
+  PD.card(grid, { title: "Recommendation letters still owed", note: "Teacher letters not yet sent for applications due by the end of January. Red means at least one is already late.", span: 6 }, (el) => {
+    const owe = new Map();
+    As.filter((a) => a.left <= 75).forEach((a) => [[a.recommender_1, a.rec_1_status], [a.recommender_2, a.rec_2_status]].forEach(([t, st]) => {
+      if (sent(st)) return;
+      const o = owe.get(t) || { n: 0, late: 0, students: new Set() }; o.n++; if (a.left < 0) o.late++; o.students.add(a.student_id); owe.set(t, o);
+    }));
+    PD.bars(el, { items: [...owe].map(([t, o]) => ({ label: t, value: o.n, hot: o.late > 0, valueText: `${o.n} <small>${o.students.size} students${o.late ? ` · ${o.late} late` : ""}</small>` })).sort((a, b) => b.value - a.value).slice(0, 14) });
+  });
+  PD.card(grid, { title: "Where the class is applying", note: "Most common colleges on student lists, with the share of those applications that use an early plan (ED/EA/REA/ED2).", span: 6 }, (el) => {
+    const g = [...PD.group(As, "college")].map(([k, v]) => ({ label: k, sub: v[0].tier, value: v.length, early: v.filter((a) => a.plan !== "RD").length }));
+    PD.bars(el, { items: g.sort((a, b) => b.value - a.value).slice(0, 14).map((i) => ({ ...i, valueText: `${i.value} <small>${PD.fmt.pct(i.early / i.value)} early</small>` })) });
+  });
+}
+
+PD.start(CONFIG, loadData, render);
+</script>
+</body>
+</html>

@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Facilities · Pomfret</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600&family=Barlow:wght@400;600&family=Cormorant+Garamond:wght@600&display=swap" rel="stylesheet">
+<style>/*KIT_CSS*/</style>
+</head>
+<body>
+<div id="app"></div>
+<script>/*KIT_JS*/</script>
+<script>
+// ============================================================ 1. SETTINGS
+const CONFIG = {
+  kicker: "Facilities",
+  title: "Work orders",
+  subtitle: "The raw export from the work request system, turned into this week's red flags, the workload trend, and the long-running requests that never seem to close.",
+  asOf: "2026-11-16 17:00",
+  source: "facilities_work_orders.csv",
+  sheet: "Facilities",
+  heatingTrade: "Heating & HVAC",
+  repeatCalls: 6,                   // this many heating calls from one building in 30 days = look at the system
+  dorms: ["Dunworth", "Pontefract", "Plant", "Bourne", "Clement", "Hale", "Kniffin", "Eastover", "Pyne", "Orchard", "Olive", "The Villa"],
+  columns: ["work_order", "submitted", "building", "trade", "priority", "description", "status", "completed"],
+  footnote: "Sample data: tickets are invented, but building names are real.",
+};
+
+// ============================================================ 2. DATA
+const CSV_DATA = /*DATA:facilities_work_orders.csv*/"";
+async function loadData() {
+  return PD.parseCSV(CSV_DATA);
+}
+
+// ============================================================ 3. RENDER
+const PRI = { Emergency: 4, High: 3, Normal: 2, Low: 1 };
+function render(rows) {
+  const now = PD.asOf(CONFIG), today = PD.day(now);
+  const raw = PD.objects(rows);
+
+  // clean up messy building names: "plant", "PLANT ", "Plant Hall", "Villa" -> one spelling
+  const keyOf = (b) => b.toLowerCase().replace(/^the\s+/, "").replace(/\s+hall$/, "").trim();
+  const counts = {}; raw.forEach((r) => { const k = keyOf(r.building); counts[k] = counts[k] || {}; counts[k][r.building.trim()] = (counts[k][r.building.trim()] || 0) + 1; });
+  const canon = {}; for (const k in counts) canon[k] = Object.entries(counts[k]).sort((a, b) => b[1] - a[1])[0][0];
+  let fixed = 0;
+  const T = raw.map((r) => {
+    const b = canon[keyOf(r.building)]; if (b !== r.building) fixed++;
+    const sub = PD.date(r.submitted), done = PD.date(r.completed);
+    const open = !done && !/complete|closed|cancel/i.test(r.status);
+    return { ...r, building: b, sub, done, open, ageH: (now - sub) / 36e5, ageD: (now - sub) / 864e5, ttc: done ? (done - sub) / 864e5 : NaN, pri: PRI[r.priority] || 2,
+      heat: r.trade === CONFIG.heatingTrade, dorm: CONFIG.dorms.includes(b) };
+  }).filter((t) => t.sub && t.sub <= now);
+  const open = T.filter((t) => t.open);
+  const urgent = open.filter((t) => t.pri >= 3 || (t.heat && t.dorm));
+  const wk = PD.addDays(today, -7);
+  const opened7 = T.filter((t) => t.sub >= wk).length, closed7 = T.filter((t) => t.done && t.done >= wk).length;
+  const recentClosed = T.filter((t) => t.done && t.done >= PD.addDays(today, -30) && t.priority === "Normal");
+  const openHeat = open.filter((t) => t.heat);
+
+  const P = PD.page({ ...CONFIG, footnote: CONFIG.footnote + ` Cleaned ${fixed} messy building names on load (e.g. “plant”, “PYNE ”, “Villa”).` });
+  const grid = P.grid;
+  PD.kpis(P.kpis, [
+    { label: "Open work orders", value: PD.fmt.int(open.length), detail: `${opened7} opened, ${closed7} closed in the last 7 days`, delta: opened7 - closed7, deltaText: (opened7 - closed7 >= 0 ? "+" : "") + (opened7 - closed7), goodWhenUp: false },
+    { label: "Open heating calls", value: PD.fmt.int(openHeat.length), hot: true, detail: `${openHeat.filter((t) => t.dorm).length} in dorms` },
+    { label: "Urgent and still open", value: PD.fmt.int(urgent.length), hot: urgent.length > 0, detail: "emergency/high priority, or no heat in a dorm" },
+    { label: "Median days to close", value: PD.fmt.dec(PD.median(recentClosed.map((t) => t.ttc))), detail: "normal priority, last 30 days" },
+    { label: "Open more than 60 days", value: PD.fmt.int(open.filter((t) => t.ageD > 60).length), detail: "long-term and capital requests" },
+  ]);
+
+  // ---- red flags
+  PD.section(grid, "<b>Red flags</b> · this week");
+  PD.card(grid, { title: "Winter is coming: heating calls this fall vs. last", note: `Running count of ${CONFIG.heatingTrade} tickets since September 1. <b style="color:var(--red)">This fall</b> against last fall in gray, lined up by date.`, span: 7, flag: true }, (el) => {
+    const y = today.getMonth() >= 6 ? today.getFullYear() : today.getFullYear() - 1;
+    const cum = (yr, stop) => { const s = new Date(yr, 8, 1), ts = T.filter((t) => t.heat && t.sub >= s).map((t) => PD.days(s, t.sub)).sort((a, b) => a - b); const pts = []; let k = 0; for (let d = 0; d <= stop; d += 2) { while (k < ts.length && ts[k] <= d) k++; pts.push([PD.addDays(new Date(y, 8, 1), d), k]); } return pts; };
+    const stop = PD.days(new Date(y, 8, 1), today);
+    const last = cum(y - 1, 150), cur = cum(y, stop);
+    const sameDay = last.filter((p) => p[0] <= today).pop()[1], nowN = cur[cur.length - 1][1];
+    PD.line(el, { height: 250, markers: [{ x: today, label: "Today" }], series: [
+      { name: "Last fall", points: last, color: "var(--context)", labelText: `Last fall ${last[last.length - 1][1]}` },
+      { name: "This fall", points: cur, color: "var(--red)", width: 2.6, strong: true, labelText: `This fall ${nowN}` }] });
+    el.appendChild(PD.el("p", { class: "pd-note", style: "margin-top:8px" }, `<b style="color:var(--red)">${PD.fmt.signed(nowN / sameDay - 1)}</b> compared with the same date last year (${sameDay}). The steep part of the curve starts in mid-November.`));
+  });
+  PD.card(grid, { title: "Open and urgent right now", note: "Emergency or high priority, plus any open heating call in a dorm. The oldest are first within each priority.", span: 5, flag: true }, (el) => {
+    PD.table(el, { id: "urgent", rows: urgent, sortKey: "pri", columns: [
+      { key: "building", label: "Where", html: (t) => `<b>${PD.esc(t.building)}</b>${t.room ? ` <span class="muted">${PD.esc(t.room)}</span>` : ""}` },
+      { key: "description", label: "Request" },
+      { key: "pri", label: "Priority", html: (t) => `<span class="pd-tag ${t.pri >= 4 ? "solid" : t.pri >= 3 ? "red" : ""}">${t.priority}</span>`, sort: (t) => t.pri * 1e6 + t.ageH },
+      { key: "ageH", label: "Open", r: true, html: (t) => (t.ageH < 48 ? Math.round(t.ageH) + " h" : Math.round(t.ageD) + " d") },
+    ] });
+  });
+  PD.card(grid, { title: "Repeat heating calls in the last 30 days", note: `Heating calls by building. ${CONFIG.repeatCalls} or more in a month (red) usually points to a boiler, valve or control problem, not to individual rooms.`, span: 6 }, (el) => {
+    const g = [...PD.group(T.filter((t) => t.heat && t.sub >= PD.addDays(today, -30)), "building")].map(([b, ts]) => ({ label: b, sub: ts.filter((t) => t.open).length ? ts.filter((t) => t.open).length + " open" : "", value: ts.length, hot: ts.length >= CONFIG.repeatCalls }))
+      .sort((a, b) => b.value - a.value).slice(0, 10);
+    PD.bars(el, { items: g });
+  });
+  PD.card(grid, { title: "Where the requests come from", note: "Tickets by building and trade, last 90 days. Darker means more.", span: 6 }, (el) => {
+    const rs = T.filter((t) => t.sub >= PD.addDays(today, -90));
+    const trades = [...PD.group(rs, "trade")].sort((a, b) => b[1].length - a[1].length).map((x) => x[0]).slice(0, 8);
+    const blds = [...PD.group(rs, "building")].sort((a, b) => b[1].length - a[1].length).slice(0, 12);
+    const short = (t) => t.replace(" & HVAC", "").replace(" & doors", "").replace(" & keys", "").replace(" & snow", "").replace(" control", "");
+    PD.heat(el, { rows: blds.map(([b, ts]) => ({ key: b, label: b, sub: ts.length })), cols: trades.map(short), labelWidth: 150,
+      values: blds.map(([b, ts]) => trades.map((tr) => ts.filter((t) => t.trade === tr).length)), tipFmt: (v) => v + " tickets" });
+  });
+
+  // ---- workload
+  PD.section(grid, "<b>Workload</b> · is the backlog growing?");
+  PD.card(grid, { title: "Open backlog at the end of each week", note: "The red line is tickets still open at the end of each week. The gray line is tickets opened that week. The backlog grows every November and shrinks over breaks.", span: 8 }, (el) => {
+    const start = PD.weekStart(T.reduce((a, t) => (t.sub < a ? t.sub : a), now));
+    const pts = [], opn = [];
+    for (let w = start; w <= today; w = PD.addDays(w, 7)) {
+      const end = PD.addDays(w, 7);
+      pts.push([w, T.filter((t) => t.sub < end && (!t.done || t.done >= end)).length]);
+      opn.push([w, T.filter((t) => t.sub >= w && t.sub < end).length]);
+    }
+    PD.line(el, { height: 250, series: [
+      { name: "Opened that week", points: opn, color: "var(--context)", width: 1.2 },
+      { name: "Open backlog", points: pts, color: "var(--red)", width: 2.4, strong: true }] });
+  });
+  PD.card(grid, { title: "Days to close, by trade", note: "Median days from request to done in the last 90 days. The black tick is the same 90 days last year.", span: 4 }, (el) => {
+    const d0 = PD.addDays(today, -90), p0 = PD.addDays(today, -455), p1 = PD.addDays(today, -365);
+    const items = [...PD.group(T.filter((t) => t.done), "trade")].map(([tr, ts]) => {
+      const a = PD.median(ts.filter((t) => t.sub >= d0).map((t) => t.ttc)), b = PD.median(ts.filter((t) => t.sub >= p0 && t.sub < p1).map((t) => t.ttc));
+      return { label: tr, value: a, ref: isNaN(b) ? null : b, hot: a > 1.25 * b, valueText: PD.fmt.dec(a) + " d" };
+    }).filter((i) => !isNaN(i.value)).sort((a, b) => b.value - a.value);
+    PD.bars(el, { items });
+  });
+
+  // ---- long-term
+  PD.section(grid, "<b>Long-term</b> · the requests that don't go away");
+  PD.card(grid, { title: "Open more than 30 days", note: "Usually waiting on capital money, a contractor, or a part. Each of these is a decision someone needs to make.", span: 8 }, (el) => {
+    PD.table(el, { id: "long", rows: open.filter((t) => t.ageD > 30), sortKey: "ageD", columns: [
+      { key: "work_order", label: "WO", html: (t) => `<span class="muted">${PD.esc(t.work_order)}</span>` },
+      { key: "building", label: "Building" },
+      { key: "description", label: "Request" },
+      { key: "status", label: "Status", html: (t) => `<span class="pd-tag ${/capital/i.test(t.status) ? "red" : ""}">${PD.esc(t.status)}</span>` },
+      { key: "ageD", label: "Age", r: true, html: (t) => `<b>${Math.round(t.ageD)}</b> d` },
+    ] });
+  });
+  PD.card(grid, { title: "Open tickets by age", note: "How long today's open tickets have been waiting.", span: 4 }, (el) => {
+    const bands = [[0, 2, "Under 2 days"], [2, 7, "2–7 days"], [7, 30, "1–4 weeks"], [30, 90, "1–3 months"], [90, 180, "3–6 months"], [180, 1e9, "6+ months"]];
+    PD.bars(el, { items: bands.map(([a, b, l]) => ({ label: l, value: open.filter((t) => t.ageD >= a && t.ageD < b).length, hot: a >= 90 })) });
+    const st = [...PD.group(open, "status")].map(([s, ts]) => `${s}: <b>${ts.length}</b>`).join(" · ");
+    el.appendChild(PD.el("p", { class: "pd-note", style: "margin-top:12px" }, st));
+  });
+}
+
+PD.start(CONFIG, loadData, render);
+</script>
+</body>
+</html>
